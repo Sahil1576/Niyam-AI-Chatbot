@@ -1,0 +1,15 @@
+chunk_size: 1000
+chunk_overlap: 200
+top_k: 5
+
+pdf_directory_path: "./data"
+persist_directory: "./chromadb"
+
+graph_image_path: "./data/graph.png"
+
+collection_name: "Niyam_AI_Chatbot"
+
+embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+
+openai_model_name: "openai/gpt-oss-120b"
+groq_model_name: "qwen/qwen3.8-27b"
