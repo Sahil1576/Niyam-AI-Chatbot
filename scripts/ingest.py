@@ -30,6 +30,7 @@ class IngestConfig:
 
         self.pdf_directory_path = config['pdf_directory_path']
         self.persist_directory = config['persist_directory']
+        self.collection_name = config['collection_name']
 
         self.embedding_model_name = config['embedding_model_name']
 
@@ -90,6 +91,27 @@ class Ingest:
             the embedding model fails to load.
         """
         try:
+
+            logging.info("Checking chromadb is available or not...")
+
+            if os.path.exists(self.config.persist_directory):
+                
+                vectorstore = Chroma(
+                    collection_name=self.config.collection_name,
+                    embedding_function=HuggingFaceEmbeddings(
+                        model_name=self.config.embedding_model_name
+                    ),
+                    persist_directory=self.config.persist_directory
+                )
+
+                count = vectorstore._collection.count()
+
+                if count > 0:
+                    logging.info("VectorDB have already data, Don't need to create.")
+                    return {
+                        "message":"VectorDB have already data, Don't need to create.",
+                        "collection":count
+                    }
 
             documents = []
 
@@ -161,7 +183,6 @@ class Ingest:
                 ids=chunk_ids
             )
 
-            return vectorstore
 
         except OSError as e:
             logging.exception("Vector database creation failed.")
@@ -171,17 +192,20 @@ class Ingest:
 #     import warnings
 #     warnings.filterwarnings("ignore")
 
-#     vectorstore = Chroma(
-#         collection_name="Niyam_AI_Chatbot",
-#         embedding_function=HuggingFaceEmbeddings(
-#             model_name="sentence-transformers/all-MiniLM-L6-v2"
-#         ),
-#         persist_directory="./chromadb"
-#     )
+    # vectorstore = Chroma(
+    #     collection_name="Niyam_AI_Chatbot",
+    #     embedding_function=HuggingFaceEmbeddings(
+    #         model_name="sentence-transformers/all-MiniLM-L6-v2"
+    #     ),
+    #     persist_directory="./chromadb"
+    # )
 
-#     answer = vectorstore.similarity_search(
-#         query="what is FEMA?",
-#         k=4
-#     )
+    # answer = vectorstore.similarity_search(
+    #     query="what is FEMA?",
+    #     k=4
+    # )
 
-#     print(f"Answer : {answer[-1].page_content}")
+    # print(f"Answer : {answer[-1].page_content}")
+
+    # ing = Ingest()
+    # print(ing.create_vectoredb(files=files))

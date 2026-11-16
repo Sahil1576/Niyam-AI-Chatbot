@@ -16,12 +16,20 @@ with open("./config/config.yaml","r") as f:
     config = yaml.safe_load(f)
 
 llm = ChatGroq(
-    model=config['groq_model_name']
+    model=config['openai_model_name']
 )
 
 structured_llm = llm.with_structured_output(
     schema=GraphState,
     method="json_mode"
+)
+
+vectorstore = Chroma(
+    collection_name=config['collection_name'],
+    persist_directory=config['persist_directory'],
+    embedding_function=HuggingFaceEmbeddings(
+        model=config['embedding_model_name']
+    )
 )
 
         
@@ -36,15 +44,6 @@ def retriever_node(state:GraphState) -> dict:
             logging.error("Vector Database not found!")
             raise FileNotFoundError("Vector Database not found!")
 
-        logging.info("Loading existing VectorDB...")
-
-        vectorstore = Chroma(
-            collection_name=config['collection_name'],
-            persist_directory=config['persist_directory'],
-            embedding_function=HuggingFaceEmbeddings(
-                model=config['embedding_model_name']
-            )
-        )
 
         if vectorstore._collection.count() == 0:
             logging.info("Vector Database has no any records!")
@@ -69,12 +68,20 @@ def retriever_node(state:GraphState) -> dict:
             doc.page_content for doc in documents
         )
 
-        return {
-            "original_question":query,
-            "documents":documents,
-            "context":context,
-            "grades":grades
-        }
+        if state.retry == 0:
+            return {
+                "original_question":query,
+                "documents":documents,
+                "context":context,
+                "grades":grades
+            }
+        else:
+            return {
+                "question":query,
+                "documents":documents,
+                "context":context,
+                "grades":grades
+            }
 
     except Exception as e:
         logging.error(f"Unexpected Error : {e}")
@@ -87,7 +94,7 @@ def grade_node(state:GraphState) -> dict:
 
         logging.info("Extract details from state...")
 
-        original_question = state.original_question
+        query = state.original_question if state.retry == 0 else state.question
         grade = state.grades
         documents = state.documents
         context = state.context
@@ -98,24 +105,23 @@ def grade_node(state:GraphState) -> dict:
         logging.info(msg="Checking chunks relavance score is >= 0.5...")
 
         response = structured_llm.invoke(prompt.format(**{
-            "original_question":original_question,
+            "original_question":query,
             "documents":documents,
             "context":context,
             "retrieval_scores":grade
         }))
 
-        if response.relavance_score >= 0.4 and response.decision == "rewrite":
+        if response.relavance_score >= 0.5 and response.decision == "relevant":
             logging.info("context is more relavant to the question.")
             return {
                 "decision": response.decision,
                 "relavance_score": response.relavance_score,
-                "question": state.original_question,
                 "documents": state.documents,
                 "context": state.context
             }
         
         else:
-            if retry <= 2:
+            if retry < 2:
                 logging.info("context is less relavant to the question.")
                 return{
                     "decision":response.decision,
@@ -124,7 +130,7 @@ def grade_node(state:GraphState) -> dict:
                     "retry":retry + 1
                 }
             else:
-                logging.info(f"context is not found for the {original_question}")
+                logging.info(f"context is not found for the {state.original_question}")
                 return{
                     "decision":"Not Found",
                     "generated_answer":"Sorry, no relevant information found in the provided documents."
@@ -141,12 +147,21 @@ def generate_answer_node(state:GraphState) -> dict:
 
         original_question = state.original_question
         rewritten_question = state.question
+        decision = state.decision
 
         documents = state.documents
         context = state.context
 
         retriever_score = state.grades
         grade_relavance_score = state.relavance_score
+
+        if decision == "not_found":
+            return {
+                "generated_answer":"Please ask the question according to the RBI Guidelines.",
+                "retry":0,
+                "question":"",
+                "grades":[]
+            }
 
         prompt = SYSTEM_PROMPT
 
@@ -161,12 +176,18 @@ def generate_answer_node(state:GraphState) -> dict:
             "relevance_score":grade_relavance_score
         }))
 
+        answer_relevance = responce.evaluation.answer_relevance
+        faithfulness = responce.evaluation.faithfulness
+        completeness = responce.evaluation.completeness
+
+        overall_score = round((answer_relevance + faithfulness + completeness) / 3,ndigits=2)
+
 
         return {
             "generated_answer":responce.generated_answer,
             "source":responce.source,
             "evaluation":responce.evaluation,
-            "overall_score":responce.overall_score
+            "overall_score":overall_score
         }
     
     except KeyError as e:

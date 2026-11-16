@@ -54,11 +54,15 @@ async def chat(request: ChatRequest):
         ]
 
         return {
+            "original_question":response.get("original_question",""),
+            "rewritted_question":response.get("question",""),
             "answer": response.get("generated_answer", ""),
             "sources": sources,
             "grades":response.get("grades", []),
             "relavance_score":response.get("relavance_score",0.0),
             "overall_score": response.get("overall_score", 0.0),
+            "evaluation":response.get("evaluation",[]),
+            "retry":response.get("retry",0)
         }
 
     except Exception as e:

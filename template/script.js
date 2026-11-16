@@ -1,12 +1,10 @@
 /* ---------- Config ---------- */
-const DEFAULT_API = 'http://127.0.0.1:8000';
+const API_BASE = 'http://127.0.0.1:8000'; // your FastAPI server
 const PAGE_OFFSET = 0; // set to 1 if your loader gives 0-based page numbers (PyPDFLoader does)
-const PROMPTS = [
-  'Summarise the main points of the document',
-  'What rules or requirements are mentioned?',
-  'Which pages talk about deadlines or penalties?'
-];
 const STAGES = ['Searching documents', 'Grading sources', 'Writing the answer'];
+
+/* Welcome text shown before the first question */
+const INTRO = "Niyam AI answers your questions on RBI guidelines and FEMA regulations, drawing only from official documents on Compounding of Contraventions, Deposits and Accounts, External Commercial Borrowings, Foreign Investment, Insurance, the Money Transfer Service Scheme and Overseas Investment. Every answer cites the source document and page.";
 
 /* ---------- Helpers ---------- */
 const $ = id => document.getElementById(id);
@@ -22,7 +20,7 @@ const pct = v => {
   return Math.round(Math.max(0, Math.min(1, v > 1 ? v / 100 : v)) * 100);
 };
 const tone = p => (p >= 70 ? 'good' : p >= 40 ? 'mid' : 'low');
-const LOGO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M7 21h10M5 7h14"/><path d="M5 7l-3 7a3 3 0 0 0 6 0L5 7zM19 7l-3 7a3 3 0 0 0 6 0l-3-7z"/></svg>';
+const LOGO = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 22h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 2l8 5H4z"/></svg>';
 
 /* Minimal markdown: code blocks, headings, lists, bold, italic, inline code */
 function md(src) {
@@ -44,13 +42,10 @@ function md(src) {
   return out.join('').replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
 }
 
-/* ---------- State ---------- */
-const KEY = 'niyam.chats.v1';
-let chats = [], curId = null, busy = false, stageTimer = null;
-try { chats = JSON.parse(ls.get(KEY) || '[]'); } catch { chats = []; }
-const save = () => ls.set(KEY, JSON.stringify(chats));
-const cur = () => chats.find(c => c.id === curId);
-const api = () => $('apiUrl').value.trim().replace(/\/+$/, '');
+/* ---------- State (in memory only, a refresh clears the screen) ---------- */
+let messages = [], busy = false, stageTimer = null;
+const feed = $('feed');
+const scrollDown = () => feed.scrollTo({ top: feed.scrollHeight });
 
 /* ---------- Rendering ---------- */
 function srcHTML(list = []) {
@@ -61,11 +56,12 @@ function srcHTML(list = []) {
     const p = isNaN(Number(x.page)) || x.page === null ? '?' : Number(x.page) + PAGE_OFFSET;
     return `<span class="src" title="${esc(x.pdf_name)}"><em>p.${esc(p)}</em><span>${esc(x.pdf_name)}</span></span>`;
   }).join('');
-  return `<div class="srcs"><span class="lbl">Sources</span>${chips}</div>`;
+  return `<div class="srcs"><span class="lbl">Source documents</span>${chips}</div>`;
 }
 
 function gradeLabel(g) {
   if (g === null || g === undefined) return '';
+  if (typeof g === 'number') return g.toFixed(3);
   if (typeof g !== 'object') return String(g);
   return Object.entries(g).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
 }
@@ -90,27 +86,18 @@ function msgHTML(m, i) {
   const body = m.error ? `<p>${esc(m.text)}</p>` : md(m.text);
   const tools = m.error ? '<button data-retry>Try again</button>' : '<button data-copy>Copy answer</button>';
   return `<div class="msg bot${m.error ? ' err' : ''}" data-i="${i}"><div class="av">${LOGO}</div><div class="body">
+    <div class="who">Niyam AI<span>Based on RBI guidelines</span></div>
     <div class="prose">${body}</div>${m.error ? '' : srcHTML(m.sources) + qualityHTML(m)}
     <div class="tools">${tools}</div></div></div>`;
 }
 
-const feed = $('feed');
-const scrollDown = () => feed.scrollTo({ top: feed.scrollHeight });
-
 function renderFeed() {
-  const c = cur();
-  $('title').textContent = c.title;
-  if (!c.messages.length) {
-    feed.innerHTML = `<div class="empty"><h2>Ask Niyam</h2><p>Answers are drawn from your indexed PDFs, with the page each one came from.</p>
-      <div class="sugg">${PROMPTS.map(p => `<button data-q="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>`;
+  if (!messages.length) {
+    feed.innerHTML = `<div class="empty"><div class="eyebrow">RBI Guidelines Assistant</div><h2>Ask Niyam</h2><div class="rule"></div><p class="lead">${esc(INTRO)}</p></div>`;
     return;
   }
-  feed.innerHTML = c.messages.map(msgHTML).join('');
+  feed.innerHTML = messages.map(msgHTML).join('');
   scrollDown();
-}
-
-function renderHistory() {
-  $('history').innerHTML = chats.map(c => `<button data-id="${c.id}" class="${c.id === curId ? 'on' : ''}">${esc(c.title)}</button>`).join('');
 }
 
 function showTyping() {
@@ -123,65 +110,49 @@ function showTyping() {
 }
 function hideTyping() { clearInterval(stageTimer); $('typing')?.remove(); }
 
-/* ---------- Chat actions ---------- */
-function newChat() {
-  if (curId && cur().messages.length === 0) return;
-  const c = { id: uid(), thread_id: uid(), title: 'New chat', messages: [] };
-  chats.unshift(c); curId = c.id; save(); renderHistory(); renderFeed();
-}
-
+/* ---------- Send: a brand-new thread_id for EVERY question ---------- */
 async function send(q, retry = false) {
   q = q.trim();
   if (!q || busy) return;
-  const c = cur();
-  if (!retry) {
-    c.messages.push({ role: 'user', text: q });
-    if (c.title === 'New chat') c.title = q.slice(0, 40);
-  }
+  if (!retry) messages.push({ role: 'user', text: q });
   busy = true; $('send').disabled = true;
-  save(); renderFeed(); renderHistory(); showTyping();
+  renderFeed(); showTyping();
   try {
-    const r = await fetch(api() + '/chat', {
+    const r = await fetch(API_BASE + '/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q, thread_id: c.thread_id })
+      body: JSON.stringify({ query: q, thread_id: uid() })
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `Server returned ${r.status}`);
-    c.messages.push({
-      role: 'bot', text: d.answer || 'No answer was returned for this question.',
+    messages.push({
+      role: 'bot', text: d.answer || 'The server responded, but the answer field was empty. Check the graph output on the backend.',
       sources: d.sources || [], grades: d.grades || [],
       rel: d.relavance_score, overall: d.overall_score // key spelled as in main.py
     });
   } catch (e) {
     const offline = e instanceof TypeError;
-    c.messages.push({ role: 'bot', error: true, text: offline ? `Can't reach ${api()}. Start the FastAPI server and check the API URL.` : `Request failed: ${e.message}` });
+    messages.push({ role: 'bot', error: true, text: offline ? `Can't reach ${API_BASE}. Start the FastAPI server and check API_BASE in script.js.` : `Request failed: ${e.message}` });
   }
   busy = false; $('send').disabled = false;
-  hideTyping(); save(); renderFeed(); renderHistory();
+  hideTyping(); renderFeed();
 }
 
 /* ---------- Events ---------- */
 feed.addEventListener('click', e => {
-  const q = e.target.closest('[data-q]');
-  if (q) return send(q.dataset.q);
   const msg = e.target.closest('.msg'); if (!msg) return;
-  const i = +msg.dataset.i, c = cur();
-  if (e.target.closest('[data-copy]')) {
-    navigator.clipboard?.writeText(c.messages[i].text);
-    const b = e.target.closest('[data-copy]'); b.textContent = 'Copied';
-    setTimeout(() => (b.textContent = 'Copy answer'), 1500);
+  const i = +msg.dataset.i;
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    navigator.clipboard?.writeText(messages[i].text);
+    copy.textContent = 'Copied';
+    setTimeout(() => (copy.textContent = 'Copy answer'), 1500);
   }
   if (e.target.closest('[data-retry]')) {
-    const last = c.messages[i - 1];
-    c.messages.splice(i, 1);
+    const last = messages[i - 1];
+    messages.splice(i, 1);
     if (last && last.role === 'user') send(last.text, true);
   }
-});
-
-$('history').addEventListener('click', e => {
-  const b = e.target.closest('[data-id]'); if (!b) return;
-  curId = b.dataset.id; renderHistory(); renderFeed(); $('side').classList.remove('open');
 });
 
 $('form').addEventListener('submit', e => {
@@ -196,15 +167,6 @@ $('input').addEventListener('input', e => {
   e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 180) + 'px';
 });
 
-$('newChat').onclick = () => { newChat(); $('side').classList.remove('open'); $('input').focus(); };
-$('menu').onclick = () => $('side').classList.toggle('open');
-$('clear').onclick = () => {
-  if (!confirm('Delete this chat?')) return;
-  chats = chats.filter(c => c.id !== curId);
-  curId = null;
-  if (chats.length) { curId = chats[0].id; save(); renderHistory(); renderFeed(); } else newChat();
-};
-
 /* Theme */
 const root = document.documentElement;
 root.dataset.theme = ls.get('niyam.theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -212,15 +174,10 @@ $('theme').onclick = () => { const t = root.dataset.theme === 'dark' ? 'light' :
 
 /* Server status (GET /) */
 async function ping() {
-  try {
-    const r = await fetch(api() + '/', { cache: 'no-store' });
-    setStatus(r.ok);
-  } catch { setStatus(false); }
+  try { const r = await fetch(API_BASE + '/', { cache: 'no-store' }); setStatus(r.ok); }
+  catch { setStatus(false); }
 }
 function setStatus(ok) { $('dot').className = ok ? 'ok' : 'bad'; $('statusTxt').textContent = ok ? 'Server online' : 'Server offline'; }
-$('apiUrl').value = ls.get('niyam.api') || DEFAULT_API;
-$('apiUrl').addEventListener('change', () => { ls.set('niyam.api', api()); ping(); });
 
 /* Init */
-if (chats.length) { curId = chats[0].id; renderHistory(); renderFeed(); } else newChat();
-ping(); setInterval(ping, 30000);
+renderFeed(); ping(); setInterval(ping, 30000);

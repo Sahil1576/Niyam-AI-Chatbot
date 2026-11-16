@@ -2,12 +2,11 @@ chunk_size: 1000
 chunk_overlap: 200
 top_k: 5
 
-pdf_directory_path: "./data"
+pdf_directory_path: "./data/PDF_Documents"
+collection_name: "Niyam_AI_Chatbot"
 persist_directory: "./chromadb"
 
-graph_image_path: "./data/graph.png"
-
-collection_name: "Niyam_AI_Chatbot"
+graph_image_path: "./data/Graph/graph.png"
 
 embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
 
