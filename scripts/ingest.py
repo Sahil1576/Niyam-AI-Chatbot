@@ -191,21 +191,22 @@ class Ingest:
 # if __name__ == "__main__":
 #     import warnings
 #     warnings.filterwarnings("ignore")
+#     from rich import print
 
-    # vectorstore = Chroma(
-    #     collection_name="Niyam_AI_Chatbot",
-    #     embedding_function=HuggingFaceEmbeddings(
-    #         model_name="sentence-transformers/all-MiniLM-L6-v2"
-    #     ),
-    #     persist_directory="./chromadb"
-    # )
+#     vectorstore = Chroma(
+#         collection_name="Niyam_AI_Chatbot",
+#         embedding_function=HuggingFaceEmbeddings(
+#             model_name="sentence-transformers/all-MiniLM-L6-v2"
+#         ),
+#         persist_directory="./chromadb"
+#     )
 
-    # answer = vectorstore.similarity_search(
-    #     query="what is FEMA?",
-    #     k=4
-    # )
+#     answer = vectorstore.similarity_search(
+#         query="What is the minimum Net Owned Funds requirement for an Indian Agent?",
+#         k=5
+#     )
 
-    # print(f"Answer : {answer[-1].page_content}")
+#     print(f"Answer : {answer}")
 
     # ing = Ingest()
     # print(ing.create_vectoredb(files=files))
