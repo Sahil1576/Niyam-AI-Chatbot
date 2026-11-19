@@ -13,7 +13,7 @@ import hashlib
 import yaml
 
 
-files = ['Compounding_of_Contraventions_under_FEMA.pdf','Diposits_and_Accounts.pdf',
+files = ['Compounding_of_Contraventions_under_FEMA.pdf','Deposits_and_Accounts.pdf',
          'External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations.pdf',
          'Foreign_Investment_in_India.pdf','Insurance.pdf','Money_Transfer_Service_Scheme.pdf',
          'Overseas_Investment.pdf']
@@ -37,6 +37,29 @@ class IngestConfig:
         
 class Ingest:
 
+    PDF_CATEGORIES = {
+        "Compounding_of_Contraventions_under_FEMA.pdf":
+            "Compounding_of_Contraventions_under_FEMA",
+
+        "Deposits_and_Accounts.pdf":
+            "Deposits_and_Accounts",
+
+        "External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations.pdf":
+            "External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations",
+
+        "Foreign_Investment_in_India.pdf":
+            "Foreign_Investment_in_India",
+
+        "Insurance.pdf":
+            "Insurance",
+
+        "Money_Transfer_Service_Scheme.pdf":
+            "Money_Transfer_Service_Scheme",
+
+        "Overseas_Investment.pdf":
+            "Overseas_Investment"
+    }
+
     def __init__(self):
         self.config = IngestConfig()
 
@@ -56,7 +79,7 @@ class Ingest:
         return chunks
 
 
-
+    @staticmethod
     def generate_chunk_id(source, page, content):
 
         unique_string = f"{source}_{page}_{content}"
@@ -127,11 +150,26 @@ class Ingest:
                     logging.info(msg=f"{file} Not Found!")
                     raise FileNotFoundError("No pdf Documents Found!")
 
+                # Identify PDF category
+                category = self.PDF_CATEGORIES.get(file)
+
+                if category is None:
+                    raise ValueError(
+                        f"Category not defined for {file}"
+                    )
+
                 # read pdf
-                data = PyPDFLoader(pdf_path)
+                loader = PyPDFLoader(pdf_path)
 
                 # load pdf
-                doc = data.load()
+                doc = loader.load()
+
+                # Add category metadata to every page
+                for page in doc:
+
+                    page.metadata["category"] = category
+
+                    page.metadata["source"] = file
 
                 # extend pdf document in documents
                 documents.extend(doc)
@@ -179,7 +217,7 @@ class Ingest:
                 documents=chunks,
                 embedding=embedding_model,
                 persist_directory=PERSIST_DIRECTORY,
-                collection_name=self.config['collection_name'],
+                collection_name=self.config.collection_name,
                 ids=chunk_ids
             )
 
@@ -188,7 +226,7 @@ class Ingest:
             logging.exception("Vector database creation failed.")
             raise CustomException(e, sys) from e
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
 #     import warnings
 #     warnings.filterwarnings("ignore")
 #     from rich import print
@@ -208,5 +246,5 @@ class Ingest:
 
 #     print(f"Answer : {answer}")
 
-    # ing = Ingest()
-    # print(ing.create_vectoredb(files=files))
+    ing = Ingest()
+    print(ing.create_vectoredb(files=files))

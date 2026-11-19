@@ -3,8 +3,21 @@ from LogHandler.logger import logging
 from LogHandler.custome_exception import CustomException
 import sys
 
+def router_after_query_node(state:GraphState) -> str:
 
-def router_node(state:GraphState) -> str:
+    try:
+        categories = state.categories
+
+        if categories == ['OTHER']:
+            return "generate_answer_node"
+
+        return "retriever_node"
+
+    except Exception as e:
+        logging.exception(f"Unexpected Error : {e}")
+        raise CustomException(e, sys)
+
+def router_after_grade_node(state:GraphState) -> str:
 
     try:
 

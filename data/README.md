@@ -1,55 +1,78 @@
 # Data Directory
 
-This directory contains the PDF documents and graph images used in the Niyam AI Chatbot project.
+This directory contains the source PDF documents and graph images used by the Niyam AI Chatbot.
 
-## 📁 Directory Structure
+## Directory structure
 
 ```text
 data/
-│
 ├── README.md
-│
-├── PDF Documents/
-│   ├── FEMA.pdf
+├── PDF_Documents/
+│   ├── Compounding_of_Contraventions_under_FEMA.pdf
+│   ├── Deposits_and_Accounts.pdf
+│   ├── External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations.pdf
+│   ├── Foreign_Investment_in_India.pdf
 │   ├── Insurance.pdf
 │   ├── Money_Transfer_Service_Scheme.pdf
-│   └── ...
-│
-└── Graphs/
-    ├── graph_1.png
-    ├── graph_2.png
-    └── ...
+│   └── Overseas_Investment.pdf
+└── Graph/
+    └── graph.png
 ```
 
-## 📄 PDF Documents
+Folder names should match the paths configured in the project. The filenames above identify the seven supported document categories.
 
-This folder contains PDF documents that serve as the knowledge base for the Niyam AI Chatbot.
+## PDF knowledge base
 
-These documents are used for:
+The seven PDFs form the chatbot's document-grounded knowledge base:
 
-- Extracting textual information.
-- Document processing and text chunking.
-- Generating embeddings using HuggingFace Embeddings.
-- Storing document vectors in ChromaDB.
-- Retrieving relevant information based on user queries.
-- Generating context-based answers with source references.
+| PDF | Category value |
+|---|---|
+| `Compounding_of_Contraventions_under_FEMA.pdf` | `Compounding_of_Contraventions_under_FEMA` |
+| `Deposits_and_Accounts.pdf` | `Deposits_and_Accounts` |
+| `External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations.pdf` | `External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations` |
+| `Foreign_Investment_in_India.pdf` | `Foreign_Investment_in_India` |
+| `Insurance.pdf` | `Insurance` |
+| `Money_Transfer_Service_Scheme.pdf` | `Money_Transfer_Service_Scheme` |
+| `Overseas_Investment.pdf` | `Overseas_Investment` |
 
-Each PDF document provides information that can be retrieved by the RAG pipeline to answer user questions.
+These documents are used to:
 
-## 📊 Graph Images
+- Load and extract PDF page text.
+- Split page content into overlapping chunks.
+- Preserve source and page metadata.
+- Attach a category value to each page before chunking, so the category is carried into each chunk.
+- Generate HuggingFace embeddings.
+- Store chunks, embeddings, and metadata in ChromaDB.
+- Retrieve chunks by semantic similarity within one or more selected categories.
+- Generate answers grounded in the retrieved PDF content with source references.
 
-This folder contains PNG images representing the graphical diagrams and workflow visualizations associated with the project.
+### Chunk metadata
 
-These images are maintained for:
+Each stored chunk should include metadata in this form:
 
-- Visual representation of project workflows.
-- Understanding the system architecture.
-- Understanding the LangGraph execution flow.
-- Documenting different stages of the RAG pipeline.
+```python
+{
+    "source": "Insurance.pdf",
+    "page": 2,
+    "category": "Insurance"
+}
+```
 
-## 🎯 Purpose
+The `category` value must exactly match the category strings used by the query-category node. The retriever uses the category list to filter ChromaDB results. For multiple categories, the filter can use Chroma's `$in` operator.
 
-The `data/` directory maintains the project-related source documents and graphical resources in one place.
+If category metadata is added to an existing ingestion pipeline, rebuild the vector database so every stored chunk contains the category field.
 
-PDF documents are used as the knowledge source for retrieval and answer generation, while PNG images provide visual references for understanding and documenting the project.
+## Graph directory
 
+The `Graph/` directory contains the PNG workflow visualization used to document the LangGraph execution flow. The diagram should reflect the current workflow:
+
+1. `query_category_node` classifies the query.
+2. `OTHER` routes directly to `generate_answer_node`.
+3. Supported categories route to `retriever_node`, which applies the category metadata filter.
+4. `grade_node` evaluates retrieved context.
+5. Relevant context routes to answer generation; a rewrite decision loops back to retrieval while retries remain; a not-found outcome routes to answer generation for the fallback response.
+6. `generate_answer_node` returns the answer or the appropriate fallback, then the graph ends.
+
+## Purpose
+
+The `data/` directory keeps the source knowledge documents and workflow visualization together. PDF files are the evidence source for retrieval and answer generation; the graph image documents the current LangGraph routing behavior.

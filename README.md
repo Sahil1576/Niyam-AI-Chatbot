@@ -1,353 +1,312 @@
 # Niyam AI Chatbot
 
-An AI-powered RAG (Retrieval-Augmented Generation) chatbot built using LangGraph, LangChain, ChromaDB, HuggingFace Embeddings, Groq LLM, and FastAPI.
+A document-grounded question-answering chatbot for RBI / FEMA guidelines. The application uses Retrieval-Augmented Generation (RAG), LangChain, LangGraph, ChromaDB, HuggingFace embeddings, a Groq LLM, and FastAPI.
 
-Niyam AI Chatbot retrieves relevant information from PDF documents, evaluates retrieved context, rewrites queries when necessary, and generates accurate answers with source references.
+The workflow first classifies the user's query into one or more PDF categories. It then retrieves chunks only from the matching category or categories, evaluates the retrieved context, rewrites the query when needed, and generates a response with source information. Queries classified as `OTHER` bypass retrieval and go directly to the answer node for an out-of-scope response.
 
-## 🚀 Project Overview
+## Project overview
 
-Niyam AI Chatbot is designed to provide document-based question answering using a RAG architecture.
+Niyam AI is designed to answer questions using the seven indexed RBI/FEMA PDF documents in the project's PDF knowledge base. It should not use general model knowledge as a substitute when the documents do not support an answer.
 
-Instead of generating answers directly from the LLM's pre-trained knowledge, the system retrieves relevant information from uploaded and indexed PDF documents and uses that context to generate grounded answers.
+### Main capabilities
 
-The application also includes:
-- Retrieval Relevance Evaluation
-- Automatic Query Rewriting
-- Conditional Routing using LangGraph
-- Maximum 2 Retrieval Retries
-- Source Attribution (PDF Name and Page Number)
-- Final Answer Evaluation
-- FastAPI Backend Integration
-
----
-
-## 🏗️ Project Architecture
-
-The project consists of two major pipelines:
-
-1. Document Ingestion and Indexing Pipeline
-2. Query Processing Pipeline using LangGraph
-
-### 1. Document Ingestion and Indexing Pipeline
-
-This pipeline prepares PDF documents for semantic search.
-
-**Step 1: PDF Document Loading**
-
-- Load PDF documents.
-- Extract text content from the documents.
-- Preserve document metadata such as PDF filename and page number.
-
-**Step 2: Text Splitting**
-
-- Split extracted text into smaller chunks.
-- Maintain chunk overlap to preserve contextual continuity.
-- Keep document metadata associated with each chunk.
-
-**Step 3: Embedding Generation**
-
-- Generate vector embeddings for each document chunk.
-- Use HuggingFace `all-MiniLM-L6-v2` embedding model.
-- Convert textual information into numerical vector representations.
-
-**Step 4: Vector Database Storage**
-
-- Store generated embeddings and corresponding document chunks in ChromaDB.
-- Preserve metadata for source attribution.
-- Make indexed documents available for semantic retrieval.
-
-### 2. Query Processing Pipeline using LangGraph
-
-The query processing pipeline handles user questions and generates final answers.
-
-**Step 1: User Query**
-
-- Receive the original question from the user.
-- Store the original question in GraphState.
-- Pass the question to the LangGraph workflow.
-
-**Step 2: Document Retrieval (Retriever Node)**
-
-- Perform semantic similarity search using ChromaDB.
-- Use HuggingFace embeddings to convert the query into a vector.
-- Retrieve the Top 5 relevant document chunks.
-- Calculate retrieval relevance scores.
-- Extract document context and preserve source metadata.
-
-**Step 3: Retrieval Relevance Evaluation (Grade Node)**
-
-- Evaluate retrieved documents and context against the original question.
-- Analyze semantic relevance and contextual information.
-- Consider retrieval scores as supporting information.
-- Generate a relevance score between 0.0 and 1.0.
-- Use JSON structured output to obtain evaluation results.
-
-**Step 4: Conditional Routing (Router Node)**
-
-LangGraph uses conditional edges to determine the next execution step.
-
-Two possible decisions are generated:
-
-**CASE 1: Relevant Context (Score ≥ 0.4)**
-
-- Accept the retrieved context.
-- Preserve the original question.
-- Route execution to the Answer Generation Node.
-
-**CASE 2: Irrelevant Context (Score < 0.4)**
-
-- Route execution back to the Retriever Node.
-- Rewrite the original question using the LLM.
-- Preserve the original question separately.
-- Use the rewritten question for the next retrieval attempt.
-- Increment the retry counter.
-
-Maximum 2 retrieval retries are allowed. If relevant context is still not found, the system returns a fallback response.
-
-**Step 5: Query Rewriting**
-
-- Analyze the original question and retrieval results.
-- Generate an alternative search query.
-- Preserve the original intent and meaning.
-- Improve search wording and terminology.
-- Send the rewritten question back to the Retriever Node.
-
-**Step 6: Answer Generation (Generate Answer Node)**
-
-When relevant context is found:
-
-- Pass the original question, rewritten question, retrieved documents, context, and retrieval scores to the LLM.
-- Generate an accurate answer based strictly on retrieved context.
-- Avoid unsupported information and hallucinations.
-- Identify relevant PDF filenames and page numbers.
-- Generate a structured response.
-
-**Step 7: Final Answer Evaluation**
-
-Evaluate the generated answer using three metrics:
-
-1. **Answer Relevance:** Measures how accurately the answer addresses the original question.
-2. **Faithfulness:** Measures how much of the generated answer is supported by retrieved context.
-3. **Completeness:** Measures whether the answer covers the important relevant information available in the retrieved context.
-
-Generate an overall score based on the answer evaluation.
-
-**Step 8: Final Response**
-
-Return the final response containing:
-
-- Generated Answer
-- Source PDF Filename
-- Source Page Number
-- Overall Score
+- PDF ingestion, text chunking, embeddings, and persistent ChromaDB storage.
+- Page-level metadata carried into chunks, including `source`, `page`, and `category`.
+- LLM-based query-to-category classification.
+- Support for one or multiple matching categories.
+- `OTHER` classification for queries outside the supported document categories.
+- Metadata-filtered semantic retrieval using ChromaDB.
+- Retrieval relevance scoring and LLM-based context grading.
+- Query rewriting and a bounded retrieval retry loop.
+- PDF-grounded answer generation with source attribution.
+- Final answer evaluation for relevance, faithfulness, and completeness.
+- FastAPI backend and HTML/CSS/JavaScript frontend.
 
 ---
 
-## 🔄 LangGraph Workflow
+## Architecture
+
+The application has two main pipelines:
+
+1. One-time PDF ingestion and vector indexing.
+2. Per-query classification, filtered retrieval, grading, and answer generation through LangGraph.
+
+### 1. Document ingestion and indexing
+
+1. **Load PDFs** — load the seven source PDFs and extract page text.
+2. **Attach metadata** — assign each page its PDF `source`, page number, and matching `category`.
+3. **Split documents** — split pages into overlapping chunks; the chunks retain their source metadata.
+4. **Generate embeddings** — create vector embeddings using HuggingFace `all-MiniLM-L6-v2`.
+5. **Persist vectors** — store chunk text, embeddings, and metadata in ChromaDB.
+
+Each chunk should carry metadata similar to:
+
+```python
+{
+    "source": "Insurance.pdf",
+    "page": 2,
+    "category": "Insurance"
+}
+```
+
+The category value must match the category strings used by the category-classification node and the metadata filter. If the category metadata is added or changed, rebuild the existing vector database so the stored chunks contain the new metadata.
+
+### 2. Query processing with LangGraph
+
+#### Step 1 — Receive the question
+
+FastAPI receives the user's question through `POST /chat` and starts the compiled LangGraph workflow. The original question is stored in `GraphState`.
+
+#### Step 2 — Query category node
+
+`query_category_node` sends the original question and the supported category list to the LLM.
+
+- The LLM returns a list in `categories`.
+- One matching category is returned as a one-item list.
+- Multiple matching categories can be returned together.
+- If none of the supported categories applies, the LLM returns `["OTHER"]`.
+- The node also returns `original_question` so the structured output satisfies the current `GraphState` schema.
+
+Supported category values:
+
+- `Compounding_of_Contraventions_under_FEMA`
+- `Deposits_and_Accounts`
+- `External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations`
+- `Foreign_Investment_in_India`
+- `Insurance`
+- `Money_Transfer_Service_Scheme`
+- `Overseas_Investment`
+
+#### Step 3 — Route after category classification
+
+`router_after_query_node` checks `state.categories`.
+
+- If `categories == ["OTHER"]`, route directly to `generate_answer_node`. Retrieval is skipped.
+- Otherwise, route to `retriever_node`.
+
+The answer node handles the `OTHER` case and returns the configured out-of-scope response.
+
+#### Step 4 — Filtered retrieval
+
+`retriever_node` selects the original question on the first attempt and the rewritten question on subsequent attempts.
+
+It calls ChromaDB `similarity_search_with_relevance_scores()` with the configured `top_k` and a metadata filter based on the category list, conceptually:
+
+```python
+filter={
+    "category": {
+        "$in": state.categories
+    }
+}
+```
+
+This limits semantic similarity search to chunks whose `category` matches one of the classified categories. The node stores retrieved documents, their relevance scores, and the combined context in `GraphState`.
+
+#### Step 5 — Grade retrieved context
+
+`grade_node` evaluates whether the retrieved documents and context support the user's question. It uses the retrieval scores as supporting information and obtains a structured grading result from the LLM.
+
+The grading result determines the next route:
+
+- **Relevant** — proceed to `generate_answer_node`.
+- **Rewrite** — if retry attempts remain, store the rewritten question, increment the retry counter, and return to `retriever_node`.
+- **Not found / other non-relevant outcome** — proceed to `generate_answer_node`, where the fallback is returned rather than generating an unsupported answer.
+
+The current node logic allows up to two retries. Keep the retry limit aligned with the implementation in `grade_node`.
+
+#### Step 6 — Generate answer or fallback
+
+`generate_answer_node` handles three outcomes:
+
+1. **`categories == ["OTHER"]`** — return an out-of-scope message explaining that Niyam AI answers questions related to its available RBI/FEMA guideline documents.
+2. **Decision is `not_found`** — return a no-relevant-information response because the available documents did not provide sufficient support.
+3. **Relevant context** — generate an answer grounded in the retrieved context and include the available source PDF/page information.
+
+The `OTHER` case and the `not_found` case are different: a query can belong to a supported category while the specific answer is absent from the PDFs.
+
+#### Step 7 — Evaluate the generated answer
+
+For a generated answer, the LLM evaluates:
+
+- **Answer relevance** — whether the answer addresses the user's question.
+- **Faithfulness** — whether the answer is supported by retrieved context.
+- **Completeness** — whether the answer covers the relevant information available in the context.
+
+Python calculates the overall score as the average of these three evaluation scores.
+
+#### Step 8 — Return the response
+
+FastAPI returns the configured response fields to the frontend, such as the generated answer, source details, and overall evaluation score.
+
+---
+
+## LangGraph workflow
 
 ```mermaid
 flowchart TD
-    A([START]) --> B[Retriever Node]
-    B --> C[Grade Node]
-    C --> D{Conditional Router}
-
-    D -->|Relevant >= 0.4| E[Generate Answer Node]
-    D -->|Irrelevant < 0.4| F[Query Rewriting]
-
-    F --> G{Retry < 2?}
-    G -->|Yes| B
-    G -->|No| H[Fallback Response]
-
-    E --> I([END])
-    H --> I
+    A([START]) --> B[query_category_node]
+    B --> C{categories == OTHER?}
+    C -->|Yes| G[generate_answer_node<br/>Out-of-scope fallback]
+    C -->|No| D[retriever_node<br/>Category metadata filter]
+    D --> E[grade_node]
+    E --> F{Grading decision}
+    F -->|Relevant| G
+    F -->|Rewrite and retry remains| D
+    F -->|Not found / retry limit reached| G
+    G --> H([END])
 ```
 
----
+### Routing summary
 
-## 🧠 GraphState Management
-
-GraphState is implemented using Pydantic BaseModel and manages information shared between LangGraph nodes.
-
-Important state fields:
-
-| Field | Description |
-|---|---|
-| original_question | Original user question |
-| question | Rewritten question |
-| documents | Retrieved document chunks |
-| context | Combined retrieved context |
-| grades | Retrieval relevance scores |
-| relavance_score | Context relevance score |
-| decision | Routing decision |
-| retry | Number of retrieval retries |
-| generated_answer | Final generated answer |
-| source | Source PDF information |
-| evaluation | Answer evaluation metrics |
-| overall_score | Overall answer quality score |
+| Stage | Condition | Next node |
+|---|---|---|
+| Category router | `categories == ["OTHER"]` | `generate_answer_node` |
+| Category router | One or more supported categories | `retriever_node` |
+| Grade router | `relevant` | `generate_answer_node` |
+| Grade router | `rewrite` and retry remains | `retriever_node` |
+| Grade router | `not_found` or retry limit reached | `generate_answer_node` |
 
 ---
 
-## ⚙️ Technology Stack
+## GraphState
 
-| Technology | Purpose |
+`GraphState` is the shared state model used by the LangGraph nodes. The workflow uses fields such as:
+
+| Field | Purpose |
 |---|---|
-| Python | Core programming language |
-| LangChain | LLM and RAG integration |
+| `original_question` | Original user query |
+| `question` | Rewritten query used for a retry |
+| `categories` | One or more classified PDF categories, or `["OTHER"]` |
+| `documents` | Retrieved LangChain documents |
+| `context` | Combined retrieved chunk text |
+| `grades` | Chroma retrieval relevance scores |
+| `relavance_score` | LLM context relevance score (retain the spelling used by the code) |
+| `decision` | Grading / routing decision |
+| `retry` | Number of retrieval retries |
+| `generated_answer` | Final answer or fallback |
+| `source` | Source PDF and page information |
+| `evaluation` | Answer relevance, faithfulness, and completeness |
+| `overall_score` | Average answer evaluation score |
+
+The category-classification call currently uses `GraphState` as its structured-output schema. Therefore, its JSON output must include every required field in that schema; in particular, it must return `original_question` as well as `categories`. Alternatively, a dedicated smaller Pydantic schema can be used for category classification.
+
+---
+
+## Technology stack
+
+| Technology | Role |
+|---|---|
+| Python | Application logic |
+| LangChain | LLM, prompt, document, and retrieval integration |
 | LangGraph | Stateful workflow and conditional routing |
-| Groq LLM | Query rewriting, evaluation, and answer generation |
-| HuggingFace Embeddings | Text embedding generation |
-| all-MiniLM-L6-v2 | Embedding model |
-| ChromaDB | Vector database |
-| Pydantic | Structured data validation |
-| FastAPI | Backend API development |
-| HTML | Frontend structure |
-| CSS | Frontend styling |
-| JavaScript | Frontend interactions and API integration |
+| Groq LLM | Category classification, grading, rewriting, and answer generation |
+| HuggingFace Embeddings | Converts text into vectors |
+| `all-MiniLM-L6-v2` | Embedding model |
+| ChromaDB | Persistent vector database and metadata-filtered retrieval |
+| Pydantic | Structured output and state validation |
+| FastAPI | Backend API |
+| HTML, CSS, JavaScript | Browser frontend |
 
 ---
 
-## 📡 FastAPI Integration
+## API integration
 
-FastAPI provides an API endpoint for communication between the frontend and LangGraph workflow.
-
-**Endpoint:**
+**Endpoint**
 
 ```http
 POST /chat
 ```
 
-**Request Body:**
-
-```json
-{
-    "query": "Your question here",
-    "thread_id": "abc123"
-}
-```
-
-**Response:**
-
-```json
-{
-    "answer": "Generated answer based on retrieved documents.",
-    "sources": [
-        {
-            "pdf_name": "FEMA_Guidelines.pdf",
-            "page": 6
-        }
-    ],
-    "overall_score": 0.95
-}
-```
-
-The frontend communicates with the FastAPI backend using JavaScript Fetch API.
+The exact request and response schema is defined by the FastAPI implementation in `main.py`. A typical request may contain a query and a conversation/thread identifier, depending on the current API code.
 
 ---
 
-## 📂 Project Structure
+## Project structure
 
 ```text
 Niyam-AI-Chatbot/
-│
 ├── app/
 │   ├── graph.py
 │   ├── node.py
+│   ├── route.py
 │   ├── state.py
-│   └── ...
-│
+│   ├── prompt.py
+│   └── graph_visualization.py
+├── config/
+│   ├── __init__.py
+│   └── config.yaml
 ├── data/
-│   └── PDF Documents
-│
-├── frontend/
+│   ├── Graph/
+│   │   └── graph.png
+│   └── PDF_Documents/
+│       └── (7 RBI/FEMA PDFs)
+├── chromadb/
+├── LogHandler/
+│   ├── custom_exception.py
+│   ├── logger.py
+│   └── test.py
+├── scripts/
+│   └── ingest.py
+├── template/
 │   ├── index.html
 │   ├── style.css
 │   └── script.js
-│
-├── vectorstore/
-│
 ├── main.py
-├── config.yaml
 ├── requirements.txt
-├── .env
-└── README.md
+├── setup.py
+├── Dockerfile
+├── README.md
+└── .gitignore
 ```
+
+### Main module responsibilities
+
+| Path | Responsibility |
+|---|---|
+| `app/graph.py` | Defines nodes, edges, conditional routing, and compiles the LangGraph workflow. |
+| `app/node.py` | Implements category classification, filtered retrieval, grading, query rewriting, and answer generation. |
+| `app/route.py` | Implements routing after category classification and after grading. |
+| `app/state.py` | Defines `GraphState` and structured state fields. |
+| `app/prompt.py` | Stores category, grading, rewriting, and answer-generation prompts. |
+| `scripts/ingest.py` | Loads PDFs, attaches metadata, chunks documents, creates embeddings, and persists ChromaDB. |
+| `config/config.yaml` | Stores paths and configurable ingestion / retrieval / model settings. |
+| `main.py` | Exposes the FastAPI endpoint and invokes the graph. |
+| `template/` | Contains the HTML, CSS, and JavaScript frontend. |
+| `LogHandler/` | Contains logging and custom exception utilities. |
+| `app/graph_visualization.py` | Supports workflow graph visualization. |
 
 ---
 
-## ▶️ Installation and Execution
+## Installation and execution
 
-**1. Clone the repository**
-
-```bash
-git clone <your-repository-url>
-```
-
-**2. Navigate to the project directory**
-
-```bash
-cd Niyam-AI-Chatbot
-```
-
-**3. Create a virtual environment**
-
-```bash
-python -m venv venv
-```
-
-**4. Activate the virtual environment**
-
-Windows:
-
-```bash
-venv\Scripts\activate
-```
-
-**5. Install dependencies**
-
-```bash
-pip install -r requirements.txt
-```
-
-**6. Configure environment variables**
-
-Configure your Groq API key and other required settings.
-
-**7. Run the FastAPI server**
+1. Clone the repository and move into the project directory.
+2. Create and activate a Python virtual environment.
+3. Install dependencies from `requirements.txt`.
+4. Configure the required API key and application settings in environment variables / configuration files.
+5. Place the seven supported PDF files in the configured PDF directory.
+6. Run the ingestion script to create the ChromaDB collection with `source`, `page`, and `category` metadata.
+7. Start the FastAPI application using the command configured for the project, for example:
 
 ```bash
 uvicorn main:app --reload
 ```
 
-**8. Access API documentation**
+8. Open the frontend and send a test question.
 
-```text
-http://127.0.0.1:8000/docs
-```
-
-**9. Run the frontend**
-
-Open the frontend using your preferred local development server and configure its API URL to point to FastAPI.
+**Important:** if you change the metadata structure or category labels, recreate the vector database. A pre-existing Chroma collection will not automatically gain metadata that was not stored during ingestion.
 
 ---
 
-## ⭐ Key Features
+## Knowledge boundary and fallback behavior
 
-- PDF-based question answering.
-- Semantic document retrieval.
-- Context relevance evaluation.
-- Automatic query rewriting.
-- Conditional workflow execution using LangGraph.
-- Maximum 2 retrieval retries.
-- Structured JSON output.
-- Source attribution with PDF filename and page number.
-- Final answer quality evaluation.
-- FastAPI backend integration.
-- Separate HTML, CSS, and JavaScript frontend.
+Niyam AI is intended to answer from its seven configured RBI/FEMA PDFs only.
 
----
+- A query outside those PDF topics should be classified as `["OTHER"]` and bypass retrieval.
+- A query within a supported topic may still return `not_found` if the relevant answer is not present in the retrieved document context.
+- The chatbot should not invent a regulatory answer or silently rely on general LLM knowledge when the source documents do not support it.
 
-## 🎯 Project Objective
+## Security
 
-The main objective of Niyam AI Chatbot is to build a reliable document-based AI assistant that can retrieve relevant information, evaluate retrieval quality, improve search queries when necessary, and generate context-grounded answers with source references.
-
-The project combines Retrieval-Augmented Generation (RAG), semantic search, LLM-based evaluation, and stateful workflow orchestration to improve the reliability of document-based question answering.
+- Keep API keys and `.env` files out of source control.
+- Do not commit the local virtual environment.
+- Treat the ChromaDB directory as generated application data; include it in version control only if intentionally required.

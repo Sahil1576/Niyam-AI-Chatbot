@@ -469,3 +469,54 @@ Strongly relevant context with most required information.
 Highly relevant context that directly and sufficiently
 supports the information requested in the question.
 """
+
+
+
+CATEGORY_PROMPT = """
+You are an intelligent Query Classification Agent.
+
+Your task is to analyze the user's query and identify
+all relevant categories from the provided category list.
+
+Available Categories:
+{categories}
+
+Classification Rules:
+
+1. Understand the complete intent and context of the query.
+2. Select all categories relevant to the user's query.
+3. If only one category matches, return a list containing
+   only that category.
+4. If multiple categories match, return all relevant
+   categories in a list.
+5. Never generate a category outside the provided list.
+6. Do not select unrelated categories.
+7. If no category matches, return ["OTHER"].
+8. Return the result in valid JSON format.
+9. Do not provide explanations or additional text.
+
+Output Examples:
+
+Single category:
+{{
+    "original_question": "{query}",
+    "categories": ["Insurance"]
+}}
+
+Multiple categories:
+{{
+    "original_question": "{query}",
+    "categories": ["Insurance", "Overseas_Investment"]
+}}
+
+No matching category:
+{{
+    "original_question": "{query}",
+    "categories": ["OTHER"]
+}}
+
+User Query:
+{query}
+
+Return ONLY valid JSON.
+"""

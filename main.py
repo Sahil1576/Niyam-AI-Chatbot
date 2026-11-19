@@ -56,6 +56,7 @@ async def chat(request: ChatRequest):
         return {
             "original_question":response.get("original_question",""),
             "rewritted_question":response.get("question",""),
+            "category":response.get("categories",[]),
             "answer": response.get("generated_answer", ""),
             "sources": sources,
             "grades":response.get("grades", []),

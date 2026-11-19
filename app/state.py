@@ -23,6 +23,8 @@ class GraphState(BaseModel):
     original_question: str = Field(...)
     question: Optional[str] = Field(default=None)
 
+    categories: List[str] = Field(default_factory=list)
+
     documents: List[Document] = Field(default_factory=list)
     context: str = Field(default="")
 

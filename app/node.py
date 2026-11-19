@@ -4,7 +4,7 @@ load_dotenv()
 import os
 import yaml
 from langchain_groq import ChatGroq
-from .prompt import SYSTEM_PROMPT, GRADE_PROMPT
+from .prompt import SYSTEM_PROMPT, GRADE_PROMPT, CATEGORY_PROMPT
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from LogHandler.custome_exception import CustomException
@@ -32,6 +32,39 @@ vectorstore = Chroma(
     )
 )
 
+def query_category_node(state:GraphState) -> dict:
+
+    try:
+        query = state.original_question
+
+        category = [
+            'Compounding_of_Contraventions_under_FEMA',
+            'Deposits_and_Accounts',
+            'External_Commercial_Borrowings_Trade_Credits_and_Structured_Obligations',
+            'Foreign_Investment_in_India',
+            'Insurance',
+            'Money_Transfer_Service_Scheme',
+            'Overseas_Investment'
+        ]
+
+        prompt = CATEGORY_PROMPT
+
+        logging.info("Indentifying query category...")
+
+        response = structured_llm.invoke(prompt.format(**{
+            "categories":category,
+            "query":query
+        }))
+
+        return {
+            "original_question":response.original_question,
+            "categories":response.categories
+        }
+    
+    except Exception as e:
+        logging.error(f"Unexpected Error : {e}")
+        raise CustomException(e, sys)
+
         
 
 def retriever_node(state:GraphState) -> dict:
@@ -39,6 +72,8 @@ def retriever_node(state:GraphState) -> dict:
     try:
 
         query = state.original_question if state.retry == 0 else state.question
+
+        category = state.categories
 
         if not os.path.exists(config['persist_directory']):
             logging.error("Vector Database not found!")
@@ -53,7 +88,12 @@ def retriever_node(state:GraphState) -> dict:
 
         results = vectorstore.similarity_search_with_relevance_scores(
             query=query,
-            k=config['top_k']
+            k=config['top_k'],
+            filter={
+                "category":{
+                    "$in":category
+                }
+            }
         )
 
         documents = []
@@ -140,13 +180,14 @@ def grade_node(state:GraphState) -> dict:
         CustomException(e,sys)
 
 
-
 def generate_answer_node(state:GraphState) -> dict:
 
     try:
 
         original_question = state.original_question
         rewritten_question = state.question
+
+        category = state.categories
         decision = state.decision
 
         documents = state.documents
@@ -155,12 +196,26 @@ def generate_answer_node(state:GraphState) -> dict:
         retriever_score = state.grades
         grade_relavance_score = state.relavance_score
 
+        if category == ["OTHER"]:
+            return {
+                "generated_answer": (
+                    "Sorry, I can only answer questions related "
+                    "to the available RBI and financial regulatory guidelines."
+                ),
+                "retry": 0,
+                "question": "",
+                "grades": []
+            }
+
         if decision == "not_found":
             return {
-                "generated_answer":"Please ask the question according to the RBI Guidelines.",
-                "retry":0,
-                "question":"",
-                "grades":[]
+                "generated_answer": (
+                    "Sorry, I couldn't find relevant information "
+                    "to answer your question in the available documents."
+                ),
+                "retry": 0,
+                "question": "",
+                "grades": []
             }
 
         prompt = SYSTEM_PROMPT
